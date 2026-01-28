@@ -1,0 +1,15 @@
+# Set the figure size and resolution
+figure.figsize : 12, 8
+figure.dpi : 150
+
+# Set lines and fonts
+lines.linewidth : 3
+font.family : sans-serif
+font.size : 12
+
+# Set axes styling
+axes.grid : False
+axes.titlesize : 20
+axes.labelsize : 16
+grid.color : D3D3D3
+grid.linestyle : --
