@@ -346,3 +346,177 @@ def readout_visualiser(nstep=None, y=None, index=None, N=None, **kwargs):
 
     time_slider.observe(on_value_change, names='value')
     on_value_change({'new': time_slider.value})
+
+def visualise_input_sequence(nstep = None, INPUT=None, N = None, **kwargs):
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    time_points = np.arange(0, nstep, 1)
+    # Traces to store the amplitude for each context
+    trace_a = np.zeros(nstep)
+    trace_b = np.zeros(nstep)
+
+    # Pre-calculate the traces using your INPUT function logic
+    for t in range(nstep):
+        inp = INPUT(t)
+        # Check if any neuron in the first half is active
+        if np.any(inp[0:int(N/2)] > 0):
+            trace_a[t] = np.mean(inp[0:int(N/2)])
+        # Check if any neuron in the second half is active
+        if np.any(inp[int(N/2):N] > 0):
+            trace_b[t] = np.mean(inp[int(N/2):N])
+
+    plt.figure(figsize=(15, 4))
+    
+    # Fill areas to make it look like the eLife paper's stimulus bars
+    plt.fill_between(time_points, trace_a, color='skyblue', alpha=0.8, label='Context A (Neurons 0-24)')
+    plt.fill_between(time_points, trace_b, color='salmon', alpha=0.8, label='Context B (Neurons 25-49)')
+    
+    plt.title("Sequential Memory Stimulation Protocol", fontsize=14)
+    plt.xlabel("Time (ms)", fontsize=12)
+    plt.ylabel("Input Amplitude (IN)", fontsize=12)
+    plt.legend(loc='upper right')
+    plt.grid(axis='x', linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.show() 
+
+def tworeadout_visualiser(INPUT=None, nstep=None, y=None, index=None, N=None, **kwargs):
+    import matplotlib.pyplot as plt
+    import ipywidgets as widgets
+    from IPython.display import display, clear_output
+    import numpy as np
+
+    # --- FIX: Prevent multiple widget instances ---
+    if 'readout_box' in globals():
+        globals()['readout_box'].close()
+
+    # --- 1. Pre-calculate Data traces ---
+    time_points = np.arange(0, nstep, 1)
+    r_data = y[index[0], :]           # RNN Firing Rates
+    w_rec_data = y[index[1], :]       # Recurrent Weights
+    
+    # Extract weights for both readouts
+    # Assuming index[4] is Readout 1 and index[5] is Readout 2
+    w_out1_data = y[index[4], :]      
+    w_out2_data = y[index[5], :]      
+    
+    # Calculate Firing Rates for both
+    readout_theta = kwargs.get('readout_theta', 0.1) 
+    y1_trace = np.maximum(0, np.sum(w_out1_data * r_data, axis=0) - readout_theta)
+    y2_trace = np.maximum(0, np.sum(w_out2_data * r_data, axis=0) - readout_theta)
+
+    # --- 2. Setup Widgets ---
+    time_slider = widgets.IntSlider(
+        value=0, min=0, max=nstep-1, step=100, 
+        description='Time (ms):', layout=widgets.Layout(width='800px')
+    )
+    plot_output = widgets.Output()
+    
+    global readout_box
+    readout_box = widgets.VBox([time_slider, plot_output])
+    display(readout_box)
+
+    # --- 3. The Update Logic ---
+    def on_value_change(change):
+        t = change['new']
+        with plot_output:
+            clear_output(wait=True)
+            plt.close('all')
+            
+            fig = plt.figure(figsize=(16, 10), constrained_layout=True)
+            gs = fig.add_gridspec(1, 2, width_ratios=[1.2, 2])
+            
+            # ================= LEFT: NETWORK SCHEMATIC =================
+            ax_net = fig.add_subplot(gs[0])
+            ax_net.set_title(f"Dual Readout State (t={t})", fontsize=14)
+            
+            # Layout
+            angles = np.linspace(0, 2*np.pi, N, endpoint=False)
+            rnn_x, rnn_y = np.cos(angles), np.sin(angles)
+            
+            # Positions for two readouts (Top-Right and Bottom-Right)
+            read1_pos = (2.8, 0.6)
+            read2_pos = (2.8, -0.6)
+            
+            # Current states
+            curr_r = r_data[:, t]
+            curr_w_rec = w_rec_data[:, t].reshape((N, N))
+            curr_w1 = w_out1_data[:, t]
+            curr_w2 = w_out2_data[:, t]
+
+            # A. Draw Recurrent Weights (with noise filtering)
+            max_w_rec = np.max(w_rec_data) if np.max(w_rec_data) > 0 else 1
+            for i in range(N):
+                for j in range(N):
+                    if i != j and curr_w_rec[i, j] / max_w_rec > 0.3:
+                        alpha = np.clip((curr_w_rec[i, j]/max_w_rec)**3, 0, 0.3)
+                        ax_net.plot([rnn_x[j], rnn_x[i]], [rnn_y[j], rnn_y[i]], 
+                                    color='gray', alpha=alpha, lw=0.5, zorder=1)
+
+            # B. Draw Readout Weights (Blue for R1, Red for R2)
+            for i in range(N):
+                # Weights to Readout 1
+                if curr_w1[i] > 0.01:
+                    ax_net.plot([rnn_x[i], read1_pos[0]], [rnn_y[i], read1_pos[1]], 
+                                color='skyblue', alpha=np.clip(curr_w1[i]*5,0,0.6), lw=1, zorder=2)
+                # Weights to Readout 2
+                if curr_w2[i] > 0.01:
+                    ax_net.plot([rnn_x[i], read2_pos[0]], [rnn_y[i], read2_pos[1]], 
+                                color='salmon', alpha=np.clip(curr_w2[i]*5,0,0.6), lw=1, zorder=2)
+
+            # C. Plot RNN & Readout Neurons
+            ax_net.scatter(rnn_x, rnn_y, c=curr_r, s=150, cmap='cividis', edgecolors='black', zorder=4)
+            
+            # Readout 1 (Memory A)
+            ax_net.scatter([read1_pos[0]], [read1_pos[1]], c=[y1_trace[t]], s=400, 
+                           cmap='Blues', edgecolors='black', marker='D', vmin=0, vmax=2)
+            # Readout 2 (Memory B)
+            ax_net.scatter([read2_pos[0]], [read2_pos[1]], c=[y2_trace[t]], s=400, 
+                           cmap='Reds', edgecolors='black', marker='D', vmin=0, vmax=2)
+
+            ax_net.set_xlim(-1.5, 3.5); ax_net.set_ylim(-1.5, 1.5); ax_net.axis('off')
+
+           # ================= RIGHT: TIME SERIES =================
+            gs_right = gs[1].subgridspec(2, 1, hspace=0.2)
+            
+            # 1. Comparison of Readout Activities + Stimulus Overlay
+            ax_y = fig.add_subplot(gs_right[0])
+            
+            # --- OVERLAY STIMULUS ---
+            # We sample the INPUT function for the whole time range to get the 'ground truth'
+            # Note: For performance, you can pre-calculate these traces in Section 1
+            trace_a_in = np.zeros(nstep)
+            trace_b_in = np.zeros(nstep)
+            for ts in range(0, nstep, 10): # Sample every 10ms for speed
+                inp = INPUT(ts)
+                trace_a_in[ts:ts+10] = np.mean(inp[0:int(N/2)])
+                trace_b_in[ts:ts+10] = np.mean(inp[int(N/2):N])
+
+            # Shade the regions where stimuli are active
+            ax_y.fill_between(time_points, 0, np.max(y1_trace)*1.2, where=(trace_a_in > 0), 
+                              color='skyblue', alpha=0.2, label='Stimulus A')
+            ax_y.fill_between(time_points, 0, np.max(y2_trace)*1.2, where=(trace_b_in > 0), 
+                              color='salmon', alpha=0.2, label='Stimulus B')
+
+            # Plot the actual firing rates
+            ax_y.plot(time_points, y1_trace, color='blue', lw=2, label='Recall A')
+            ax_y.plot(time_points, y2_trace, color='red', lw=2, label='Recall B')
+            
+            ax_y.axvline(x=t, color='black', linestyle='--')
+            ax_y.set_ylabel('Firing Rate')
+            ax_y.set_title("Readout Response vs. External Stimulus")
+            ax_y.legend(loc='upper right', fontsize='small', ncol=2)
+            ax_y.set_ylim(0, max(np.max(y1_trace), np.max(y2_trace)) * 1.3)
+
+            # 2. Weight Distribution (Heatmap for both)
+            ax_w = fig.add_subplot(gs_right[1], sharex=ax_y)
+            # Concatenate weights to show them together
+            combined_w = np.vstack([w_out1_data, np.zeros((5, nstep)), w_out2_data])
+            ax_w.imshow(combined_w, aspect='auto', cmap='magma')
+            ax_w.set_ylabel('R1 Index (Top) | R2 Index (Bottom)')
+            ax_w.set_xlabel('Time (ms)')
+
+            plt.show()
+
+    time_slider.observe(on_value_change, names='value')
+    on_value_change({'new': time_slider.value})
