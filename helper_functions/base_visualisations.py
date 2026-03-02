@@ -235,4 +235,114 @@ def visualise_correlation_change_over_day(x_days_apart, threshold, N=None, Neven
 
         
     
+def readout_visualiser(nstep=None, y=None, index=None, N=None, **kwargs):
     
+    import matplotlib.pyplot as plt
+    import ipywidgets as widgets
+    from IPython.display import display, clear_output
+    import numpy as np
+    # --- 1. Pre-calculate Data traces ---
+    time_points = np.arange(0, nstep, 1)
+    r_data = y[index[0], :]           # RNN Firing Rates [cite: 338]
+    w_rec_data = y[index[1], :]       # Recurrent Weights [cite: 323]
+    w_out_data = y[index[4], :]       # Readout Weights [cite: 391]
+    
+    # Calculate Readout Firing Rate (y = sum(W_out * r)) [cite: 399]
+    # We apply the threshold logic here for the visualization [cite: 342]
+    readout_theta = kwargs.get('readout_theta', 0.0) 
+    readout_rate_trace = np.maximum(0, np.sum(w_out_data * r_data, axis=0) - readout_theta)
+
+    # --- 2. Setup Widgets ---
+    time_slider = widgets.IntSlider(
+        value=0, min=0, max=nstep-1, step=100, 
+        description='Time (ms):', layout=widgets.Layout(width='800px')
+    )
+    plot_output = widgets.Output()
+    display(time_slider, plot_output)
+
+    # --- 3. The Update Logic ---
+    def on_value_change(change):
+        t = change['new']
+        with plot_output:
+            clear_output(wait=True)
+            plt.close('all')
+            
+            fig = plt.figure(figsize=(16, 8), constrained_layout=True)
+            gs = fig.add_gridspec(1, 2, width_ratios=[1.2, 2])
+            
+            # ================= LEFT: DETAILED NETWORK SCHEMATIC =================
+            ax_net = fig.add_subplot(gs[0])
+            ax_net.set_title(f"Network & Readout State (t={t})", fontsize=14)
+            
+            # RNN Layout (Circular)
+            angles = np.linspace(0, 2*np.pi, N, endpoint=False)
+            rnn_x, rnn_y = np.cos(angles), np.sin(angles)
+            read_x, read_y = 2.8, 0 # Position of readout neuron
+            
+            # Current states
+            curr_r = r_data[:, t]
+            curr_w_rec = w_rec_data[:, t].reshape((N, N))
+            curr_w_out = w_out_data[:, t]
+            curr_readout_r = readout_rate_trace[t]
+
+            # A. Draw Recurrent Weights (RNN -> RNN) [cite: 323, 324]
+            # We use a power-law alpha to make high weights pop and low weights vanish
+            max_w_rec = np.max(w_rec_data) if np.max(w_rec_data) > 0 else 1
+            visibility_threshold = 0.8  # Ignore weights below 20% of max 
+            
+            for i in range(N):
+                for j in range(N):
+                    if i != j:
+                        weight_ratio = curr_w_rec[i, j] / max_w_rec
+                        if weight_ratio > visibility_threshold:
+                            # Use weight_ratio^2 or ^3 to aggressively hide lower values
+                            alpha = np.clip(weight_ratio**2, 0, 0.4) 
+                            ax_net.plot([rnn_x[j], rnn_x[i]], [rnn_y[j], rnn_y[i]], 
+                                        color='gray', alpha=alpha, lw=0.8, zorder=1)
+
+            # B. Draw Readout Weights (RNN -> Readout) [cite: 391, 399]
+            max_w_out = np.max(w_out_data) if np.max(w_out_data) > 0 else 1
+            for i in range(N):
+                alpha = np.clip(curr_w_out[i] / max_w_out, 0, 1)
+                ax_net.plot([rnn_x[i], read_x], [rnn_y[i], read_y], 
+                            color='red', alpha=alpha, lw=1.5, zorder=2)
+
+            # C. Plot RNN Neurons [cite: 65, 89]
+            sc_rnn = ax_net.scatter(rnn_x, rnn_y, c=curr_r, s=150, cmap='cividis', 
+                                    edgecolors='black', zorder=4, vmin=0, vmax=10)
+            
+            # D. Plot Readout Neuron [cite: 263]
+            # Color is tied to its own firing rate
+            sc_read = ax_net.scatter([read_x], [read_y], c=[curr_readout_r], s=400, 
+                                     cmap='Reds', edgecolors='black', marker='D', 
+                                     zorder=5, vmin=0, vmax=np.max(readout_rate_trace)+1)
+            
+            ax_net.set_xlim(-1.5, 3.5); ax_net.set_ylim(-1.5, 1.5)
+            ax_net.axis('off')
+            
+            # Colorbars
+            cb1 = plt.colorbar(sc_rnn, ax=ax_net, label='RNN Rate', location='bottom', pad=0.05, shrink=0.5)
+            cb2 = plt.colorbar(sc_read, ax=ax_net, label='Readout Rate', location='right', pad=0.05, shrink=0.5)
+
+            # ================= RIGHT: TIME SERIES =================
+            gs_right = gs[1].subgridspec(2, 1, hspace=0.1)
+            
+            # 1. Readout Neuron Activity Trace [cite: 222, 264]
+            ax_y = fig.add_subplot(gs_right[0])
+            ax_y.plot(time_points, readout_rate_trace, color='red', lw=2)
+            ax_y.fill_between(time_points, readout_rate_trace, color='red', alpha=0.1)
+            ax_y.axvline(x=t, color='black', linestyle='--')
+            ax_y.set_ylabel('Readout Rate ($y$)')
+            ax_y.set_xlim(0, nstep)
+
+            # 2. Output Weight Evolution [cite: 238, 266]
+            ax_w_heat = fig.add_subplot(gs_right[1], sharex=ax_y)
+            im_w = ax_w_heat.imshow(w_out_data, aspect='auto', cmap='binary', origin='upper')
+            ax_w_heat.axvline(x=t, color='red', linewidth=2)
+            ax_w_heat.set_ylabel('RNN Neuron Index')
+            ax_w_heat.set_xlabel('Time (ms)')
+
+            plt.show()
+
+    time_slider.observe(on_value_change, names='value')
+    on_value_change({'new': time_slider.value})
