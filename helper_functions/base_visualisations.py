@@ -407,7 +407,7 @@ def tworeadout_visualiser(INPUT=None, nstep=None, y=None, index=None, N=None, **
 
     # --- 2. Setup Widgets ---
     time_slider = widgets.IntSlider(
-        value=0, min=0, max=nstep-1, step=100, 
+        value=0, min=0, max=nstep-1, step=50, 
         description='Time (ms):', layout=widgets.Layout(width='800px')
     )
     plot_output = widgets.Output()
@@ -493,10 +493,10 @@ def tworeadout_visualiser(INPUT=None, nstep=None, y=None, index=None, N=None, **
                 trace_b_in[ts:ts+10] = np.mean(inp[int(N/2):N])
 
             # Shade the regions where stimuli are active
-            ax_y.fill_between(time_points, 0, np.max(y1_trace)*1.2, where=(trace_a_in > 0), 
-                              color='skyblue', alpha=0.2, label='Stimulus A')
-            ax_y.fill_between(time_points, 0, np.max(y2_trace)*1.2, where=(trace_b_in > 0), 
-                              color='salmon', alpha=0.2, label='Stimulus B')
+            max_height = max(np.max(y1_trace), np.max(y2_trace)) * 1.2
+
+            ax_y.fill_between(time_points, 0, max_height, where=(trace_a_in > 0), color='skyblue', alpha=0.4)
+            ax_y.fill_between(time_points, 0, max_height, where=(trace_b_in > 0), color='salmon', alpha=0.4)
 
             # Plot the actual firing rates
             ax_y.plot(time_points, y1_trace, color='blue', lw=2, label='Recall A')
@@ -509,14 +509,91 @@ def tworeadout_visualiser(INPUT=None, nstep=None, y=None, index=None, N=None, **
             ax_y.set_ylim(0, max(np.max(y1_trace), np.max(y2_trace)) * 1.3)
 
             # 2. Weight Distribution (Heatmap for both)
-            ax_w = fig.add_subplot(gs_right[1], sharex=ax_y)
-            # Concatenate weights to show them together
-            combined_w = np.vstack([w_out1_data, np.zeros((5, nstep)), w_out2_data])
-            ax_w.imshow(combined_w, aspect='auto', cmap='magma')
-            ax_w.set_ylabel('R1 Index (Top) | R2 Index (Bottom)')
-            ax_w.set_xlabel('Time (ms)')
+            # ax_w = fig.add_subplot(gs_right[1], sharex=ax_y)
+            # # Concatenate weights to show them together
+            # combined_w = np.vstack([w_out1_data, np.zeros((5, nstep)), w_out2_data])
+            # ax_w.imshow(combined_w, aspect='auto', cmap='magma')
+            # ax_w.set_ylabel('R1 Index (Top) | R2 Index (Bottom)')
+            # ax_w.set_xlabel('Time (ms)')
 
+            # plt.show()
+            # ================= RIGHT: WEIGHT EVOLUTION HEATMAP =================
+            ax_w = fig.add_subplot(gs_right[1], sharex=ax_y)
+            
+            # 1. Prepare the stacked weight matrix
+            # We add a small gap (zeros) between the two readout weight blocks for clarity
+            gap = np.zeros((5, nstep))
+            combined_w = np.vstack([w_out1_data, gap, w_out2_data])
+            
+            # 2. Plot the Heatmap
+            # Use 'magma' or 'viridis' to show weight intensity
+            # vmin/vmax ensures that the color scale doesn't flicker as you move the slider
+            im_w = ax_w.imshow(combined_w, aspect='auto', cmap='magma', 
+                               origin='upper', vmin=0, vmax=np.max(combined_w)*0.8)
+            
+            # 3. Add visual indicators
+            ax_w.axvline(x=t, color='white', linestyle='--', alpha=0.8) # Current time marker
+            
+            # Labeling the specific readout blocks
+            ax_w.set_yticks([N//2, N + 5 + N//2])
+            ax_w.set_yticklabels(['Readout A\nWeights', 'Readout B\nWeights'], fontsize=10)
+            
+            ax_w.set_ylabel('RNN Neuron Index ($i$)')
+            ax_w.set_xlabel('Time (ms)')
+            ax_w.set_title('Synaptic Weight Evolution ($W_{out}$)', fontsize=12)
             plt.show()
+            # Optional: Add a colorbar for weight intensity
+            # plt.colorbar(im_w, ax=ax_w, label='Weight Strength', pad=0.01)
 
     time_slider.observe(on_value_change, names='value')
     on_value_change({'new': time_slider.value})
+
+def plot_readout_weight_evolution(nstep=None, y=None, index=None, N=None, **kwargs):
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    time_points = np.arange(0, nstep, 1)
+    # Extract weight data
+    w_out1 = y[index[4], :] # Shape (N, nstep)
+    w_out2 = y[index[5], :] # Shape (N, nstep)
+    
+    mid = N // 2
+
+    # 1. Calculate Total Weight Sums (Checking Homeostasis)
+    sum_w1 = np.sum(w_out1, axis=0)
+    sum_w2 = np.sum(w_out2, axis=0)
+
+    # 2. Calculate Mean Weights for "Correct" vs "Incorrect" halves
+    # Readout 1 (A) should stay in the first half
+    w1_on_target = np.mean(w_out1[:mid, :], axis=0)
+    w1_off_target = np.mean(w_out1[mid:, :], axis=0)
+    
+    # Readout 2 (B) should stay in the second half
+    w2_on_target = np.mean(w_out2[mid:, :], axis=0)
+    w2_off_target = np.mean(w_out2[:mid, :], axis=0)
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
+
+    # --- TOP PLOT: Total Capacity ---
+    ax1.plot(time_points, sum_w1, color='blue', label='Total Weight W1 (Readout A)')
+    ax1.plot(time_points, sum_w2, color='red', label='Total Weight W2 (Readout B)', linestyle='--')
+    ax1.set_ylabel('Total Weight $\sum W_{out}$')
+    ax1.set_title('Global Weight Homeostasis')
+    ax1.legend()
+    ax1.grid(alpha=0.3)
+
+    # --- BOTTOM PLOT: Specificity ---
+    ax2.plot(time_points, w1_on_target, color='blue', lw=2, label='R1 on Half A (Correct)')
+    ax2.plot(time_points, w1_off_target, color='blue', alpha=0.3, label='R1 on Half B (Muddle)')
+    
+    ax2.plot(time_points, w2_on_target, color='red', lw=2, label='R2 on Half B (Correct)')
+    ax2.plot(time_points, w2_off_target, color='red', alpha=0.3, label='R2 on Half A (Muddle)')
+    
+    ax2.set_ylabel('Mean Weight Amplitude')
+    ax2.set_xlabel('Time (ms)')
+    ax2.set_title('Readout Specificity vs. Crosstalk')
+    ax2.legend(loc='upper right', ncol=2, fontsize='small')
+    ax2.grid(alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
