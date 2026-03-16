@@ -1,5 +1,5 @@
 # Set the figure size and resolution
-figure.figsize : 12, 8
+figure.figsize : 3, 2
 figure.dpi : 150
 
 # Set lines and fonts
